@@ -31,12 +31,33 @@ class TelegramChannelModel(models.Model):
 # ==========================================
 
 class Movie(models.Model):
+    title = models.CharField(max_length=500, null=True, blank=True)
     description = models.TextField(null=True, blank=True)
     file_id = models.CharField(max_length=255, null=True, blank=True)
     code = models.CharField(max_length=255, unique=True, null=True, blank=True)
-    rate = models.DecimalField(max_digits=5, decimal_places=2, default=0.0, null=True, blank=True)
+    is_series = models.BooleanField(default=False)
+    rate = models.DecimalField(max_digits=10, decimal_places=2, default=0.0, null=True, blank=True)
     rank = models.IntegerField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):
-        return f"Movie {self.id} - {self.description}"
+        return f"{self.title if self.title else self.id}"
+
+    class Meta:
+        verbose_name = 'Kino'
+        verbose_name_plural = 'Kinolar'
+
+class Episode(models.Model):
+    movie = models.ForeignKey(Movie, related_name='episodes', on_delete=models.CASCADE)
+    file_id = models.CharField(max_length=255)
+    number = models.IntegerField()
+    code = models.CharField(max_length=255, unique=True, null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.movie.title} - {self.number}-qism"
+
+    class Meta:
+        verbose_name = 'Qism'
+        verbose_name_plural = 'Qismlar'
+        ordering = ['number']
