@@ -87,4 +87,8 @@ local_settings.py
 .idea
 __pycache__
 .env
-#db.sqlite3
+*.db.sqlite3
+*db.sqlite3
+venv/
+*.venv/
+*venv
