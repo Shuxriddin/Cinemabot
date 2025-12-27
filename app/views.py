@@ -1,8 +1,9 @@
 from django.shortcuts import render
 # Create your views here.
 from rest_framework.viewsets import ModelViewSet
-from .serializer import BotUserSerializer, TelegramChannelSerializer, MovieSerializer
-from .models import BotUserModel, TelegramChannelModel, Movie
+from .serializer import BotUserSerializer, TelegramChannelSerializer, MovieSerializer, EpisodeSerializer
+from .models import BotUserModel, TelegramChannelModel, Movie, Episode
+from django.db.models import Q
 from rest_framework.views import APIView
 from rest_framework import status
 from rest_framework.response import Response
@@ -11,6 +12,24 @@ from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 from django.http import JsonResponse
 from django.views import View
+from django.db.models import Max
+
+def generate_unique_code():
+    # Faqat 10000 dan kichik bo'lgan (ketma-ket) kodlarni tekshiramiz
+    # Chunki avvalgi random kodlar juda katta bo'lib ketgan bo'lishi mumkin
+    max_movie = Movie.objects.filter(code__regex=r'^\d{1,5}$').aggregate(Max('code'))['code__max']
+    max_episode = Episode.objects.filter(code__regex=r'^\d{1,5}$').aggregate(Max('code'))['code__max']
+    
+    def to_int(val):
+        try:
+            return int(val) if val and str(val).isdigit() else 0
+        except:
+            return 0
+            
+    # Agar hech qanday kod bo'lmasa 210 dan boshlaymiz, aks holda max + 1
+    current_max = max(to_int(max_movie), to_int(max_episode))
+    next_code = max(current_max, 209) + 1
+    return str(next_code)
 
 class BotUserViewset(ModelViewSet):
     queryset = BotUserModel.objects.all()
@@ -78,19 +97,60 @@ class MoviesViewset(ModelViewSet):
     queryset = Movie.objects.all()
     serializer_class = MovieSerializer
 
+class EpisodeViewset(ModelViewSet):
+    queryset = Episode.objects.all()
+    serializer_class = EpisodeSerializer
+
 
 class CreateMovieView(APIView):
     def post(self, request):
+        title = request.data.get('title')
         description = request.data.get('description')
         file_id = request.data.get('file_id')
-        if description and file_id:
-            try:
-                movie = Movie.objects.create(description=description, file_id=file_id)
-                serializer = MovieSerializer(movie)
-                return Response(serializer.data, status=status.HTTP_201_CREATED)
-            except Exception as e:
-                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        return Response({'error': 'Invalid data'}, status=status.HTTP_400_BAD_REQUEST)
+        is_series = request.data.get('is_series', False)
+        episode_number = request.data.get('episode_number')
+
+        if not title or not file_id:
+            return Response({'error': 'Title and file_id are required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            if is_series:
+                # Serialni nomi bo'yicha qidiramiz yoki yangi yaratamiz
+                # Series header doesn't necessarily need a code if we search episodes
+                movie, created = Movie.objects.get_or_create(
+                    title=title,
+                    is_series=True,
+                    defaults={'description': description}
+                )
+                
+                # Qismni qo'shamiz
+                episode, ep_created = Episode.objects.get_or_create(
+                    movie=movie,
+                    number=episode_number,
+                    defaults={'file_id': file_id, 'code': generate_unique_code()}
+                )
+                if not ep_created:
+                    episode.file_id = file_id
+                    # We don't change the code if it already exists
+                    episode.save()
+                
+                result_data = MovieSerializer(movie).data
+                result_data['new_code'] = episode.code if ep_created else None
+            else:
+                # Oddiy kino
+                movie = Movie.objects.create(
+                    title=title,
+                    description=description,
+                    file_id=file_id,
+                    is_series=False,
+                    code=generate_unique_code()
+                )
+                result_data = MovieSerializer(movie).data
+                result_data['new_code'] = movie.code
+            
+            return Response(result_data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
 class MovieCodeView(View):
     def get(self, request, *args, **kwargs):
@@ -143,11 +203,24 @@ class SearchMovieCodeView(APIView):
     def get(self, request, id):
         if id:
             try:
-                movie = Movie.objects.get(id=id)
-                serializer = MovieSerializer(movie)
-                return Response(serializer.data, status=status.HTTP_206_PARTIAL_CONTENT)
-            except Movie.DoesNotExist:
-                return Response({'error': 'Movie not found'}, status=status.HTTP_404_NOT_FOUND)
+                # 1. Kinolardan qidiramiz
+                movie = Movie.objects.filter(Q(id=id) | Q(code=id)).first()
+                if movie:
+                    serializer = MovieSerializer(movie)
+                    return Response(serializer.data, status=status.HTTP_200_OK)
+                
+                # 2. Qismlardan (episodlardan) qidiramiz
+                episode = Episode.objects.filter(code=id).first()
+                if episode:
+                    movie = episode.movie
+                    serializer = MovieSerializer(movie).data
+                    # Target episode ni belgilaymiz, bot shunga qarab aynan shu qismni yuboradi
+                    serializer['target_episode'] = EpisodeSerializer(episode).data
+                    return Response(serializer, status=status.HTTP_200_OK)
+
+                return Response({'error': 'Movie or Episode not found'}, status=status.HTTP_404_NOT_FOUND)
+            except Exception as e:
+                return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'error': 'ID not provided'}, status=status.HTTP_400_BAD_REQUEST)
 
 
