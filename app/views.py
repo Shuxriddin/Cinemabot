@@ -116,26 +116,31 @@ class CreateMovieView(APIView):
         try:
             if is_series:
                 # Serialni nomi bo'yicha qidiramiz yoki yangi yaratamiz
-                # Series header doesn't necessarily need a code if we search episodes
                 movie, created = Movie.objects.get_or_create(
                     title=title,
                     is_series=True,
-                    defaults={'description': description}
+                    defaults={'description': description, 'code': generate_unique_code()}
                 )
                 
-                # Qismni qo'shamiz
+                # Agar serial mavjud bo'lib, kod yo'q bo'lsa, kod beramiz
+                if not movie.code:
+                    movie.code = generate_unique_code()
+                    movie.save()
+                
+                # Qismni qo'shamiz (episodega alohida kod bermayapmiz)
                 episode, ep_created = Episode.objects.get_or_create(
                     movie=movie,
                     number=episode_number,
-                    defaults={'file_id': file_id, 'code': generate_unique_code()}
+                    defaults={'file_id': file_id}
                 )
                 if not ep_created:
                     episode.file_id = file_id
-                    # We don't change the code if it already exists
                     episode.save()
                 
                 result_data = MovieSerializer(movie).data
-                result_data['new_code'] = episode.code if ep_created else None
+                # Serial kodini qaytaramiz (barcha qismlar uchun bir xil kod)
+                result_data['new_code'] = movie.code
+                result_data['episode_created'] = ep_created
             else:
                 # Oddiy kino
                 movie = Movie.objects.create(
