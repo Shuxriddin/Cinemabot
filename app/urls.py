@@ -6,6 +6,7 @@ router = DefaultRouter()
 router.register('botuser', BotUserViewset)
 router.register('channels', TelegramChannelViewset)
 router.register('movies', MoviesViewset)
+router.register('episodes', EpisodeViewset)
 
 urlpatterns = [
     path('', include(router.urls)),
